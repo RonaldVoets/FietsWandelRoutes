@@ -18,7 +18,7 @@ export interface SavedRoute {
   mode: Mode
   created: number
   /** bekende route: wordt bij openen opnieuw opgehaald, coords blijft dan leeg */
-  trail?: { type: string; id: number; host?: 'hiking' | 'cycling' | 'mtb' }
+  trail?: { type: string; id: number; host?: 'hiking' | 'cycling' | 'mtb' | 'fe' }
   /** leeg bij een geïmporteerde GPX of bekende route */
   waypoints: LngLat[]
   coords: [number, number, number][]

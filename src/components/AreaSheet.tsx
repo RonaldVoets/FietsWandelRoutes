@@ -22,23 +22,29 @@ interface Props {
 export default function AreaSheet({ mode, area, onClose, onPick }: Props) {
   const [sort, setSort] = useState<Sort>('niveau')
   const [lengths, setLengths] = useState<Record<string, number | null>>({})
-  const hits = area === 'laden' ? null : area.hits
+  const [roundOnly, setRoundOnly] = useState(false)
+  const all = area === 'laden' ? null : area.hits
+  const hasRound = !!all?.some((h) => h.circular)
+  const hits = useMemo(
+    () => (all && roundOnly && hasRound ? all.filter((h) => h.circular) : all),
+    [all, roundOnly, hasRound],
+  )
 
   // lengtes ophalen, vier tegelijk, zodat de routedienst niet overspoeld wordt
   useEffect(() => {
-    if (!hits) return
+    if (!all) return
     const ac = new AbortController()
     let i = 0
     const worker = async () => {
-      while (i < hits.length && !ac.signal.aborted) {
-        const h = hits[i++]
-        const len = await trailLength(h, ac.signal).catch(() => null)
+      while (i < all.length && !ac.signal.aborted) {
+        const h = all[i++]
+        const len = h.length ?? (await trailLength(h, ac.signal).catch(() => null))
         if (!ac.signal.aborted) setLengths((l) => ({ ...l, [trailKey(h)]: len }))
       }
     }
     for (let n = 0; n < 4; n++) worker()
     return () => ac.abort()
-  }, [hits])
+  }, [all])
 
   const sorted = useMemo(() => {
     if (!hits || sort === 'niveau') return hits
@@ -57,7 +63,7 @@ export default function AreaSheet({ mode, area, onClose, onPick }: Props) {
   const row = (h: TrailHit, withLevel: boolean) => {
     const key = trailKey(h)
     const len = lengths[key]
-    const extra = [withLevel && h.level, h.ref, h.mtb && 'MTB'].filter(Boolean).join(' · ')
+    const extra = [h.circular && 'Rondje', withLevel && h.level, h.ref, h.mtb && 'MTB'].filter(Boolean).join(' · ')
     return (
       <li key={key}>
         <button className="route-item" onClick={() => onPick(h)}>
@@ -70,7 +76,7 @@ export default function AreaSheet({ mode, area, onClose, onPick }: Props) {
                 'Afstand onbekend'
               ) : (
                 <>
-                  <b>{fmtKm(len)} km</b> · ca. {fmtTime(len, 0, mode)}
+                  <b>{fmtKm(len)} km</b> · ca. {fmtTime(len, h.ascent ?? 0, mode)}
                 </>
               )}
               {extra && ` · ${extra}`}
@@ -96,7 +102,7 @@ export default function AreaSheet({ mode, area, onClose, onPick }: Props) {
         </div>
         {!hits || !sorted ? (
           <p className="empty">Routes ophalen…</p>
-        ) : hits.length === 0 ? (
+        ) : all && all.length === 0 ? (
           <p className="empty">Geen bekende routes in dit kaartbeeld. Schuif of zoom uit en probeer het opnieuw.</p>
         ) : (
           <>
@@ -107,6 +113,12 @@ export default function AreaSheet({ mode, area, onClose, onPick }: Props) {
                 </button>
               ))}
             </div>
+            {hasRound && (
+              <label className="toggle">
+                <input type="checkbox" checked={roundOnly} onChange={(e) => setRoundOnly(e.target.checked)} />
+                Alleen rondjes
+              </label>
+            )}
             <div className="area-list">
               {area !== 'laden' && area.capped && (
                 <p className="empty">Er zijn meer routes dan hier passen. Zoom in voor de volledige lijst.</p>

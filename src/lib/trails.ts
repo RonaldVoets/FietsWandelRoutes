@@ -1,11 +1,18 @@
+import { AOF } from '../data/aof'
+import { forestryList, forestryTrail } from './forestry'
 import { ascentOf, buildRoute } from './geo'
 import type { LngLat, Mode, Route } from './types'
 
 // Bekende (bewegwijzerde) routes uit OpenStreetMap, via Waymarked Trails.
 // Fietsen combineert de fietsroutes met de mountainbikeroutes.
-export type TrailHost = 'hiking' | 'cycling' | 'mtb'
-export const TRAIL_HOSTS: Record<Mode, TrailHost[]> = { fiets: ['cycling', 'mtb'], wandel: ['hiking'] }
-const api = (host: TrailHost) => `https://${host}.waymarkedtrails.org/api/v1`
+// 'fe' zijn de officiële bosroutes van Forestry England (zie forestry.ts).
+export type TrailHost = 'hiking' | 'cycling' | 'mtb' | 'fe'
+type WmtHost = Exclude<TrailHost, 'fe'>
+export const TRAIL_HOSTS: Record<Mode, WmtHost[]> = {
+  fiets: ['cycling', 'mtb'],
+  wandel: ['hiking'],
+}
+const api = (host: WmtHost) => `https://${host}.waymarkedtrails.org/api/v1`
 
 const R = 6378137
 const toMerc = (p: ArrayLike<number>): [number, number] => [
@@ -19,7 +26,12 @@ const toLonLat = (x: number, y: number): LngLat => [
 
 export const LEVELS = ['Nationaal', 'Regionaal', 'Lokaal'] as const
 export type Level = (typeof LEVELS)[number]
-const GROUP: Record<string, Level> = { INT: 'Nationaal', NAT: 'Nationaal', REG: 'Regionaal', LOC: 'Lokaal' }
+const GROUP: Record<string, Level> = {
+  INT: 'Nationaal',
+  NAT: 'Nationaal',
+  REG: 'Regionaal',
+  LOC: 'Lokaal',
+}
 
 export interface TrailRef {
   type: string
@@ -33,31 +45,47 @@ export interface TrailHit extends TrailRef {
   ref?: string
   level: Level
   mtb: boolean
+  /** lengte in meters, als de bron die meteen meegeeft */
+  length?: number
+  /** rondwandeling, volgens het register van Adventure On Foot */
+  circular?: boolean
+  /** stijging in meters, volgens datzelfde register */
+  ascent?: number
 }
 
 const LIMIT = 100
 
-async function list(host: TrailHost, bbox: number[], signal?: AbortSignal): Promise<TrailHit[]> {
+async function list(host: WmtHost, bbox: number[], signal?: AbortSignal): Promise<TrailHit[]> {
   const res = await fetch(`${api(host)}/list/by_area?bbox=${bbox.map((v) => v.toFixed(0)).join(',')}&limit=${LIMIT}`, {
     signal,
   })
   if (!res.ok) return []
   const json = await res.json()
-  return (json.results ?? []).map((t: Record<string, string> & { id: number }) => ({
-    type: t.type,
-    id: t.id,
-    host,
-    // routes met alleen een nummer (zoals het National Cycle Network) heten "Route 6"
-    name: t.name ?? (t.ref ? `Route ${t.ref}` : 'Naamloze route'),
-    ref: t.name && t.ref !== t.name ? t.ref : undefined,
-    level: GROUP[t.group] ?? 'Lokaal',
-    mtb: host === 'mtb',
-  }))
+  return (json.results ?? []).map((t: Record<string, string> & { id: number }): TrailHit => {
+    const extra = host === 'hiking' && t.type === 'relation' ? AOF[t.id] : undefined
+    return {
+      circular: extra ? extra[0] === 1 : undefined,
+      ascent: extra?.[1] || undefined,
+      type: t.type,
+      id: t.id,
+      host,
+      // routes met alleen een nummer (zoals het National Cycle Network) heten "Route 6"
+      name: t.name ?? (t.ref ? `Route ${t.ref}` : 'Naamloze route'),
+      ref: t.name && t.ref !== t.name ? t.ref : undefined,
+      level: GROUP[t.group] ?? 'Lokaal',
+      mtb: host === 'mtb',
+    }
+  })
 }
 
 async function listAll(mode: Mode, bbox: number[], signal?: AbortSignal) {
-  const lists = await Promise.all(TRAIL_HOSTS[mode].map((h) => list(h, bbox, signal).catch(() => [] as TrailHit[])))
-  const hits = lists.flat()
+  const [w, s] = toLonLat(bbox[0], bbox[1])
+  const [e, n] = toLonLat(bbox[2], bbox[3])
+  const [forest, ...lists] = await Promise.all([
+    forestryList(mode, [w, s, e, n], signal).catch(() => [] as TrailHit[]),
+    ...TRAIL_HOSTS[mode].map((h) => list(h, bbox, signal).catch(() => [] as TrailHit[])),
+  ])
+  const hits = [...lists.flat(), ...forest]
   hits.sort((a, b) => LEVELS.indexOf(a.level) - LEVELS.indexOf(b.level) || a.name.localeCompare(b.name))
   return { hits, capped: lists.some((l) => l.length >= LIMIT) }
 }
@@ -103,7 +131,12 @@ interface ElePoint {
 
 const sq = (a: ArrayLike<number>, b: ArrayLike<number>) => (a[0] - b[0]) ** 2 + (a[1] - b[1]) ** 2
 
-export async function fetchTrail(mode: Mode, ref: TrailRef, signal?: AbortSignal): Promise<{ name: string; route: Route }> {
+export async function fetchTrail(
+  mode: Mode,
+  ref: TrailRef,
+  signal?: AbortSignal,
+): Promise<{ name: string; route: Route }> {
+  if (ref.host === 'fe') return forestryTrail(ref.id, signal)
   const base = `${api(ref.host ?? TRAIL_HOSTS[mode][0])}/details/${ref.type}/${ref.id}`
   const res = await fetch(base, { signal })
   if (!res.ok) throw new Error('Deze route is nu niet op te halen.')
@@ -118,7 +151,9 @@ export async function fetchTrail(mode: Mode, ref: TrailRef, signal?: AbortSignal
   const simplify = length < 5000 ? 10 : Math.floor(length / 500)
   let segments: Record<string, { elevation: ElePoint[] }> = {}
   try {
-    const er = await fetch(`${base}/way-elevation?simplify=${simplify}`, { signal })
+    const er = await fetch(`${base}/way-elevation?simplify=${simplify}`, {
+      signal,
+    })
     if (er.ok) segments = (await er.json()).segments ?? {}
   } catch (e) {
     if ((e as Error).name === 'AbortError') throw e
@@ -198,12 +233,14 @@ export async function trailLength(t: TrailRef, signal?: AbortSignal): Promise<nu
   const key = trailKey(t)
   const cached = lengths()[key]
   if (cached !== undefined) return cached
-  if (!t.host) return null
+  if (!t.host || t.host === 'fe') return null
   const ac = new AbortController()
   const stop = () => ac.abort()
   signal?.addEventListener('abort', stop)
   try {
-    const res = await fetch(`${api(t.host)}/details/${t.type}/${t.id}`, { signal: ac.signal })
+    const res = await fetch(`${api(t.host)}/details/${t.type}/${t.id}`, {
+      signal: ac.signal,
+    })
     if (!res.ok || !res.body) return null
     const reader = res.body.getReader()
     const dec = new TextDecoder()

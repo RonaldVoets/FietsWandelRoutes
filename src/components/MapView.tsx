@@ -16,7 +16,10 @@ const START_BOUNDS: [LngLat, LngLat] = [
 ]
 
 const TRAILS_ATTR =
-  'Routes: <a href="https://waymarkedtrails.org" target="_blank" rel="noreferrer">Waymarked Trails</a>'
+  'Routes: <a href="https://waymarkedtrails.org" target="_blank" rel="noreferrer">Waymarked Trails</a>, ' +
+  '<a href="https://adventureonfoot.co.uk/registry/licence" target="_blank" rel="noreferrer">Adventure On Foot</a>. ' +
+  'Contains, or is based on, information supplied by the Forestry Commission. ' +
+  '© Crown copyright and database right 2026 Ordnance Survey AC0000814847'
 
 interface Props {
   mode: Mode
