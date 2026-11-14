@@ -8,6 +8,8 @@ export interface Route {
   cum: number[]
   distance: number
   ascent: number
+  /** lijn op volle detail voor de kaart (bekende routes); anders tekent de kaart coords */
+  line?: LngLat[][]
 }
 
 export interface SavedRoute {
@@ -15,7 +17,9 @@ export interface SavedRoute {
   name: string
   mode: Mode
   created: number
-  /** leeg bij een geïmporteerde GPX */
+  /** bekende route: wordt bij openen opnieuw opgehaald, coords blijft dan leeg */
+  trail?: { type: string; id: number }
+  /** leeg bij een geïmporteerde GPX of bekende route */
   waypoints: LngLat[]
   coords: [number, number, number][]
   distance: number

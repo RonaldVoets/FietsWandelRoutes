@@ -27,7 +27,7 @@ interface Props {
   /** index in route.coords van het punt onder de vinger in het hoogteprofiel */
   scrub: number | null
   userPos: LngLat | null
-  onTap(p: LngLat): void
+  onTap(p: LngLat, zoom: number): void
   onMove(index: number, p: LngLat): void
   onSelect(index: number): void
 }
@@ -129,7 +129,7 @@ const MapView = forwardRef<MapHandle, Props>(function MapView(props, ref) {
       setReady(true)
     })
 
-    map.on('click', (e) => latest.current.onTap([e.lngLat.lng, e.lngLat.lat]))
+    map.on('click', (e) => latest.current.onTap([e.lngLat.lng, e.lngLat.lat], map.getZoom()))
 
     return () => {
       mapRef.current = null
@@ -144,7 +144,13 @@ const MapView = forwardRef<MapHandle, Props>(function MapView(props, ref) {
     const src = mapRef.current!.getSource('route') as GeoJSONSource
     src.setData(
       route
-        ? { type: 'Feature', properties: {}, geometry: { type: 'LineString', coordinates: route.coords } }
+        ? {
+            type: 'Feature',
+            properties: {},
+            geometry: route.line
+              ? { type: 'MultiLineString', coordinates: route.line }
+              : { type: 'LineString', coordinates: route.coords },
+          }
         : { type: 'FeatureCollection', features: [] },
     )
   }, [ready, route])

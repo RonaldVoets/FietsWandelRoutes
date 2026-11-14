@@ -3,11 +3,12 @@ import ElevationProfile from './components/ElevationProfile'
 import Icon from './components/Icon'
 import MapView, { type MapHandle } from './components/MapView'
 import SearchBar from './components/SearchBar'
-import { estimateMinutes, fmtDuration, fmtKm } from './lib/format'
+import { difficulty, fmtKm, fmtTime, multiDay } from './lib/format'
 import { buildRoute, nearestIndex } from './lib/geo'
 import { parseGpx, shareGpx } from './lib/gpx'
 import { fetchRoute } from './lib/routing'
 import { loadDraft, loadRoutes, storeDraft, storeRoutes } from './lib/storage'
+import { fetchTrail, trailsAt, type TrailHit } from './lib/trails'
 import type { LngLat, Mode, Route, SavedRoute } from './lib/types'
 
 const MODE_LABEL: Record<Mode, string> = { fiets: 'Fietsen', wandel: 'Wandelen' }
@@ -33,6 +34,10 @@ export default function App() {
   const [listOpen, setListOpen] = useState(false)
   const [saveName, setSaveName] = useState<string | null>(null)
   const [toast, setToast] = useState<string | null>(null)
+  /** bekende routes op de aangetikte plek, om uit te kiezen */
+  const [trailPick, setTrailPick] = useState<{ pos: LngLat; hits: TrailHit[] } | null>(null)
+  /** de bekende route die nu getoond wordt */
+  const [trail, setTrail] = useState<{ type: string; id: number } | null>(null)
 
   const notify = useCallback((msg: string) => setToast(msg), [])
   useEffect(() => {
@@ -97,10 +102,51 @@ export default function App() {
     setName(null)
   }
 
-  const onTap = (p: LngLat) => {
+  // even wachten tot het paneel zijn nieuwe hoogte heeft, anders valt de route erachter
+  const fitSoon = (coords: ArrayLike<number>[]) => setTimeout(() => map.current?.fit(coords), 80)
+
+  const tapSeq = useRef(0)
+  const onTap = async (p: LngLat, zoom: number) => {
+    const seq = ++tapSeq.current
     if (selected !== null) return setSelected(null)
-    if (imported) return notify('Dit is een geïmporteerde route. Kies Wis om zelf te plannen.')
-    commit([...waypoints, p])
+    // eenmaal aan het plannen is elke tik een nieuw punt
+    if (waypoints.length > 0) return commit([...waypoints, p])
+    let hits: TrailHit[] = []
+    // pas vanaf zoom 10 is duidelijk welke route je aantikt
+    if (showTrails && zoom >= 10) hits = await trailsAt(mode, p, zoom).catch(() => [])
+    if (seq !== tapSeq.current) return
+    if (hits.length > 0) return setTrailPick({ pos: p, hits })
+    setTrailPick(null)
+    if (imported) return notify('Je bekijkt een bestaande route. Kies Wis om zelf te plannen.')
+    commit([p])
+  }
+
+  const trailAbort = useRef<AbortController | null>(null)
+  const loadTrail = (hit: { type: string; id: number }, m: Mode = mode) => {
+    trailAbort.current?.abort()
+    const ac = new AbortController()
+    trailAbort.current = ac
+    setTrailPick(null)
+    setLoading(true)
+    fetchTrail(m, hit, ac.signal)
+      .then((t) => {
+        routeKey.current = ''
+        setMode(m)
+        setWaypoints([])
+        setHistory([])
+        setSelected(null)
+        setImported(true)
+        setRoute(t.route)
+        setName(t.name)
+        setTrail({ type: hit.type, id: hit.id })
+        setLoading(false)
+        fitSoon(t.route.coords)
+      })
+      .catch((e: Error) => {
+        if (e.name === 'AbortError') return
+        setLoading(false)
+        notify(e instanceof TypeError ? 'Geen verbinding met de routedienst.' : e.message)
+      })
   }
 
   const undo = () => {
@@ -119,6 +165,8 @@ export default function App() {
       setHistory([])
     } else commit([])
     setName(null)
+    setTrail(null)
+    setTrailPick(null)
   }
 
   const closed =
@@ -137,8 +185,10 @@ export default function App() {
       name: routeName,
       mode,
       created: Date.now(),
+      trail: trail ?? undefined,
       waypoints: imported ? [] : waypoints,
-      coords: route.coords.map((c) => [+c[0].toFixed(5), +c[1].toFixed(5), Math.round(c[2])]),
+      // een bekende route halen we bij openen opnieuw op; die is te groot om te bewaren
+      coords: trail ? [] : route.coords.map((c) => [+c[0].toFixed(5), +c[1].toFixed(5), Math.round(c[2])]),
       distance: route.distance,
       ascent: route.ascent,
     }
@@ -150,6 +200,12 @@ export default function App() {
   }
 
   const open = (s: SavedRoute) => {
+    setTrailPick(null)
+    if (s.trail) {
+      setListOpen(false)
+      return loadTrail(s.trail, s.mode)
+    }
+    setTrail(null)
     const r = buildRoute(s.coords, s.ascent)
     routeKey.current = s.waypoints.length >= 2 ? s.mode + JSON.stringify(s.waypoints) : ''
     setMode(s.mode)
@@ -160,7 +216,7 @@ export default function App() {
     setRoute(r)
     setName(s.name)
     setListOpen(false)
-    map.current?.fit(r.coords)
+    fitSoon(r.coords)
   }
 
   const remove = (s: SavedRoute) => {
@@ -219,10 +275,14 @@ export default function App() {
     return n.dist < 200 ? route.distance - route.cum[n.index] : null
   }, [route, userPos])
 
+  const level = route ? difficulty(route.distance, route.ascent, mode) : null
+
   const hint = imported
     ? null
     : waypoints.length === 0
-      ? 'Tik op de kaart om je startpunt te kiezen'
+      ? showTrails
+        ? 'Tik op de kaart om te starten, of op een gekleurde route'
+        : 'Tik op de kaart om je startpunt te kiezen'
       : waypoints.length === 1
         ? 'Tik op de kaart voor je volgende punt'
         : null
@@ -278,16 +338,65 @@ export default function App() {
         {loading && <div className="loading" />}
         <div className="segment" role="tablist" aria-label="Soort route">
           {(['fiets', 'wandel'] as const).map((m) => (
-            <button key={m} role="tab" aria-selected={mode === m} onClick={() => setMode(m)}>
+            <button
+              key={m}
+              role="tab"
+              aria-selected={mode === m}
+              onClick={() => {
+                setMode(m)
+                setTrailPick(null)
+              }}
+            >
               <Icon name={m} size={20} />
               {MODE_LABEL[m]}
             </button>
           ))}
         </div>
 
-        {name && route && <div className="route-name">{name}</div>}
+        {trailPick && (
+          <div className="pick">
+            <div className="pick-head">
+              <span>Bekende routes op deze plek</span>
+              <button className="icon-btn" aria-label="Sluiten" onClick={() => setTrailPick(null)}>
+                <Icon name="sluit" size={20} />
+              </button>
+            </div>
+            <ul>
+              {trailPick.hits.map((h) => (
+                <li key={h.type + h.id}>
+                  <button onClick={() => loadTrail(h)}>
+                    <span className="pick-text">
+                      <strong>{h.name}</strong>
+                      <span>{[h.ref, h.level].filter(Boolean).join(' · ')}</span>
+                    </span>
+                    <span className="pick-go">Bekijk</span>
+                  </button>
+                </li>
+              ))}
+            </ul>
+            {!imported && (
+              <button
+                className="pick-plan"
+                onClick={() => {
+                  commit([trailPick.pos])
+                  setTrailPick(null)
+                }}
+              >
+                Zelf plannen vanaf dit punt
+              </button>
+            )}
+          </div>
+        )}
 
-        {route && (
+        {route && !trailPick && (
+          <div className="meta">
+            <span className="route-name">{name ?? (mode === 'fiets' ? 'Fietsroute' : 'Wandelroute')}</span>
+            {multiDay(route.distance, mode) && <span className="pill">Meerdaags</span>}
+            <span className={`pill pill-${level}`}>{level}</span>
+          </div>
+        )}
+
+        {route && !trailPick && (
           <>
             <div className="stats">
               <div>
@@ -299,7 +408,7 @@ export default function App() {
                 <span>m stijgen</span>
               </div>
               <div>
-                <strong>{fmtDuration(estimateMinutes(route.distance, route.ascent, mode))}</strong>
+                <strong>{fmtTime(route.distance, route.ascent, mode)}</strong>
                 <span>geschat</span>
               </div>
             </div>
@@ -316,7 +425,7 @@ export default function App() {
             <button onClick={() => commit(waypoints.filter((_, i) => i !== selected))}>Verwijder</button>
           </div>
         ) : (
-          hint && <p className="hint">{hint}</p>
+          hint && !trailPick && <p className="hint">{hint}</p>
         )}
 
         {(waypoints.length > 0 || route || history.length > 0) && (
@@ -380,8 +489,8 @@ export default function App() {
                       <span className="route-text">
                         <strong>{s.name}</strong>
                         <span>
-                          {fmtKm(s.distance)} km · {s.ascent} m stijgen ·{' '}
-                          {fmtDuration(estimateMinutes(s.distance, s.ascent, s.mode))}
+                          {fmtKm(s.distance)} km · {s.ascent.toLocaleString('nl-NL')} m stijgen ·{' '}
+                          {fmtTime(s.distance, s.ascent, s.mode)} · {difficulty(s.distance, s.ascent, s.mode)}
                         </span>
                       </span>
                     </button>

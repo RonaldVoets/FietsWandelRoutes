@@ -5,15 +5,20 @@ const esc = (s: string) =>
   s.replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;').replace(/"/g, '&quot;')
 
 export function toGpx(name: string, route: Route): string {
-  const pts = route.coords
-    .map((c) => `<trkpt lat="${c[1].toFixed(6)}" lon="${c[0].toFixed(6)}"><ele>${c[2].toFixed(1)}</ele></trkpt>`)
-    .join('\n')
+  // bekende routes: de lijn op volle detail (zonder hoogte), anders de berekende punten met hoogte
+  const segs = route.line
+    ? route.line.map((l) => l.map((c) => `<trkpt lat="${c[1].toFixed(6)}" lon="${c[0].toFixed(6)}"/>`).join('\n'))
+    : [
+        route.coords
+          .map((c) => `<trkpt lat="${c[1].toFixed(6)}" lon="${c[0].toFixed(6)}"><ele>${c[2].toFixed(1)}</ele></trkpt>`)
+          .join('\n'),
+      ]
   return `<?xml version="1.0" encoding="UTF-8"?>
 <gpx version="1.1" creator="FietsWandelRoutes" xmlns="http://www.topografix.com/GPX/1/1">
 <metadata><name>${esc(name)}</name></metadata>
-<trk><name>${esc(name)}</name><trkseg>
-${pts}
-</trkseg></trk>
+<trk><name>${esc(name)}</name>
+${segs.map((s) => `<trkseg>\n${s}\n</trkseg>`).join('\n')}
+</trk>
 </gpx>
 `
 }

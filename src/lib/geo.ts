@@ -12,7 +12,7 @@ export function haversine(a: ArrayLike<number>, b: ArrayLike<number>): number {
 }
 
 /** Stijging met een drempel van 5 m, zodat GPS-ruis niet meetelt. */
-function ascentOf(coords: [number, number, number][]): number {
+export function ascentOf(coords: [number, number, number][]): number {
   let total = 0
   let ref = coords[0]?.[2] ?? 0
   for (const c of coords) {

@@ -278,12 +278,110 @@ button {
   box-shadow: 0 1px 4px rgba(0, 0, 0, 0.14);
 }
 
+.meta {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  margin-bottom: -4px;
+}
 .route-name {
+  flex: 1;
+  min-width: 0;
   font-weight: 600;
   white-space: nowrap;
   overflow: hidden;
   text-overflow: ellipsis;
-  margin-bottom: -4px;
+}
+.pill {
+  flex: none;
+  padding: 3px 9px;
+  border-radius: 999px;
+  background: var(--fill);
+  font-size: 12.5px;
+  font-weight: 600;
+}
+.pill-Makkelijk {
+  background: rgba(22, 163, 74, 0.16);
+  color: #15803d;
+}
+.pill-Gemiddeld {
+  background: rgba(217, 119, 6, 0.18);
+  color: #b45309;
+}
+.pill-Zwaar {
+  background: rgba(217, 45, 32, 0.16);
+  color: #b42318;
+}
+@media (prefers-color-scheme: dark) {
+  .pill-Makkelijk {
+    color: #4ade80;
+  }
+  .pill-Gemiddeld {
+    color: #fbbf24;
+  }
+  .pill-Zwaar {
+    color: #f87171;
+  }
+}
+
+.pick-head {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  font-weight: 600;
+}
+.pick-head .icon-btn {
+  width: 36px;
+  height: 36px;
+  margin: -6px -8px -6px 0;
+}
+.pick ul {
+  list-style: none;
+  margin: 6px 0 0;
+  padding: 0;
+  max-height: 38vh;
+  overflow-y: auto;
+}
+.pick li button {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  width: 100%;
+  padding: 9px 0;
+  border-top: 1px solid var(--line);
+  text-align: left;
+}
+.pick-text {
+  flex: 1;
+  min-width: 0;
+  display: flex;
+  flex-direction: column;
+}
+.pick-text strong {
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+.pick-text span {
+  font-size: 13px;
+  color: var(--muted);
+}
+.pick-go {
+  flex: none;
+  padding: 6px 12px;
+  border-radius: 9px;
+  background: var(--fill);
+  color: var(--accent);
+  font-size: 14px;
+  font-weight: 600;
+}
+.pick-plan {
+  width: 100%;
+  height: 44px;
+  margin-top: 6px;
+  border-radius: 12px;
+  background: var(--fill);
+  font-weight: 600;
 }
 
 .stats {
