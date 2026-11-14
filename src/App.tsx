@@ -6,12 +6,14 @@ import SearchBar from './components/SearchBar'
 import { difficulty, fmtKm, fmtTime, multiDay } from './lib/format'
 import { buildRoute, nearestIndex } from './lib/geo'
 import { parseGpx, shareGpx } from './lib/gpx'
-import { fetchRoute } from './lib/routing'
+import { fetchRoundTrip, fetchRoute } from './lib/routing'
 import { loadDraft, loadRoutes, storeDraft, storeRoutes } from './lib/storage'
-import { fetchTrail, trailsAt, type TrailHit } from './lib/trails'
+import { fetchTrail, LEVELS, trailsAt, trailsInView, type TrailHit, type TrailRef } from './lib/trails'
 import type { LngLat, Mode, Route, SavedRoute } from './lib/types'
 
 const MODE_LABEL: Record<Mode, string> = { fiets: 'Fietsen', wandel: 'Wandelen' }
+/** keuzes voor de lengte van een rondje, in km */
+const ROUND_KM: Record<Mode, number[]> = { fiets: [20, 40, 60, 80], wandel: [5, 10, 15, 20] }
 const draft = loadDraft()
 
 export default function App() {
@@ -37,7 +39,11 @@ export default function App() {
   /** bekende routes op de aangetikte plek, om uit te kiezen */
   const [trailPick, setTrailPick] = useState<{ pos: LngLat; hits: TrailHit[] } | null>(null)
   /** de bekende route die nu getoond wordt */
-  const [trail, setTrail] = useState<{ type: string; id: number } | null>(null)
+  const [trail, setTrail] = useState<TrailRef | null>(null)
+  /** lijst met alle bekende routes in het kaartbeeld */
+  const [area, setArea] = useState<{ hits: TrailHit[]; capped: boolean } | 'laden' | null>(null)
+  /** het gemaakte rondje: startpunt en gekozen lengte, om een ander rondje te kunnen maken */
+  const [roundTrip, setRoundTrip] = useState<{ start: LngLat; km: number } | null>(null)
 
   const notify = useCallback((msg: string) => setToast(msg), [])
   useEffect(() => {
@@ -122,7 +128,7 @@ export default function App() {
   }
 
   const trailAbort = useRef<AbortController | null>(null)
-  const loadTrail = (hit: { type: string; id: number }, m: Mode = mode) => {
+  const loadTrail = (hit: TrailRef, m: Mode = mode) => {
     trailAbort.current?.abort()
     const ac = new AbortController()
     trailAbort.current = ac
@@ -138,7 +144,8 @@ export default function App() {
         setImported(true)
         setRoute(t.route)
         setName(t.name)
-        setTrail({ type: hit.type, id: hit.id })
+        setTrail({ type: hit.type, id: hit.id, host: hit.host })
+        setRoundTrip(null)
         setLoading(false)
         fitSoon(t.route.coords)
       })
@@ -146,6 +153,47 @@ export default function App() {
         if (e.name === 'AbortError') return
         setLoading(false)
         notify(e instanceof TypeError ? 'Geen verbinding met de routedienst.' : e.message)
+      })
+  }
+
+  const makeRound = (km: number) => {
+    const start = roundTrip?.start ?? waypoints[0]
+    if (!start) return
+    trailAbort.current?.abort()
+    const ac = new AbortController()
+    trailAbort.current = ac
+    setLoading(true)
+    fetchRoundTrip(start, mode, km * 1000, ac.signal)
+      .then((r) => {
+        routeKey.current = ''
+        setWaypoints([])
+        setHistory([])
+        setSelected(null)
+        setImported(true)
+        setTrail(null)
+        setRoute(r)
+        setName(`Rondje ${fmtKm(r.distance)} km`)
+        setRoundTrip({ start, km })
+        setLoading(false)
+        fitSoon(r.coords)
+      })
+      .catch((e: Error) => {
+        if (e.name === 'AbortError') return
+        setLoading(false)
+        notify(e instanceof TypeError ? 'Geen verbinding met de routedienst.' : e.message)
+      })
+  }
+
+  const openArea = () => {
+    const b = map.current?.bounds()
+    if (!b) return
+    setTrailPick(null)
+    setArea('laden')
+    trailsInView(mode, b)
+      .then(setArea)
+      .catch(() => {
+        setArea(null)
+        notify('Geen verbinding met de routedienst.')
       })
   }
 
@@ -167,6 +215,7 @@ export default function App() {
     setName(null)
     setTrail(null)
     setTrailPick(null)
+    setRoundTrip(null)
   }
 
   const closed =
@@ -206,6 +255,7 @@ export default function App() {
       return loadTrail(s.trail, s.mode)
     }
     setTrail(null)
+    setRoundTrip(null)
     const r = buildRoute(s.coords, s.ascent)
     routeKey.current = s.waypoints.length >= 2 ? s.mode + JSON.stringify(s.waypoints) : ''
     setMode(s.mode)
@@ -284,7 +334,7 @@ export default function App() {
         ? 'Tik op de kaart om te starten, of op een gekleurde route'
         : 'Tik op de kaart om je startpunt te kiezen'
       : waypoints.length === 1
-        ? 'Tik op de kaart voor je volgende punt'
+        ? 'Tik op de kaart voor je volgende punt, of kies een rondje'
         : null
 
   return (
@@ -363,11 +413,11 @@ export default function App() {
             </div>
             <ul>
               {trailPick.hits.map((h) => (
-                <li key={h.type + h.id}>
+                <li key={h.host + h.type + h.id}>
                   <button onClick={() => loadTrail(h)}>
                     <span className="pick-text">
                       <strong>{h.name}</strong>
-                      <span>{[h.ref, h.level].filter(Boolean).join(' · ')}</span>
+                      <span>{[h.ref, h.level, h.mtb && 'MTB'].filter(Boolean).join(' · ')}</span>
                     </span>
                     <span className="pick-go">Bekijk</span>
                   </button>
@@ -426,6 +476,26 @@ export default function App() {
           </div>
         ) : (
           hint && !trailPick && <p className="hint">{hint}</p>
+        )}
+
+        {(roundTrip || (waypoints.length === 1 && !imported)) && !trailPick && selected === null && (
+          <div className="round">
+            <span>{roundTrip ? 'Tik opnieuw voor een ander rondje' : 'Rondje vanaf je startpunt'}</span>
+            <div className="chips">
+              {ROUND_KM[mode].map((km) => (
+                <button key={km} aria-pressed={roundTrip?.km === km} disabled={loading} onClick={() => makeRound(km)}>
+                  {km} km
+                </button>
+              ))}
+            </div>
+          </div>
+        )}
+
+        {waypoints.length === 0 && !route && !trailPick && (
+          <button className="secondary" onClick={openArea}>
+            <Icon name="lijst" size={20} />
+            Bekende {mode === 'fiets' ? 'fietsroutes' : 'wandelroutes'} in beeld
+          </button>
         )}
 
         {(waypoints.length > 0 || route || history.length > 0) && (
@@ -516,6 +586,61 @@ export default function App() {
                 if (f) importFile(f)
               }}
             />
+          </div>
+        </div>
+      )}
+
+      {area && (
+        <div className="overlay" onClick={() => setArea(null)}>
+          <div className="sheet" role="dialog" aria-label="Bekende routes in beeld" onClick={(e) => e.stopPropagation()}>
+            <div className="sheet-head">
+              <h2>
+                {mode === 'fiets' ? 'Fietsroutes' : 'Wandelroutes'} in beeld
+                {area !== 'laden' && <span className="count">{area.hits.length}</span>}
+              </h2>
+              <button className="icon-btn" aria-label="Sluiten" onClick={() => setArea(null)}>
+                <Icon name="sluit" />
+              </button>
+            </div>
+            {area === 'laden' ? (
+              <p className="empty">Routes ophalen…</p>
+            ) : area.hits.length === 0 ? (
+              <p className="empty">Geen bekende routes in dit kaartbeeld. Schuif of zoom uit en probeer het opnieuw.</p>
+            ) : (
+              <div className="area-list">
+                {area.capped && <p className="empty">Er zijn meer routes dan hier passen. Zoom in voor de volledige lijst.</p>}
+                {LEVELS.map((lv) => {
+                  const hits = area.hits.filter((h) => h.level === lv)
+                  if (hits.length === 0) return null
+                  return (
+                    <section key={lv}>
+                      <h3>
+                        {lv} · {hits.length}
+                      </h3>
+                      <ul className="routes">
+                        {hits.map((h) => (
+                          <li key={h.host + h.type + h.id}>
+                            <button
+                              className="route-item"
+                              onClick={() => {
+                                setArea(null)
+                                loadTrail(h)
+                              }}
+                            >
+                              <span className="route-text">
+                                <strong>{h.name}</strong>
+                                {(h.ref || h.mtb) && <span>{[h.ref, h.mtb && 'MTB'].filter(Boolean).join(' · ')}</span>}
+                              </span>
+                              <span className="pick-go">Bekijk</span>
+                            </button>
+                          </li>
+                        ))}
+                      </ul>
+                    </section>
+                  )
+                })}
+              </div>
+            )}
           </div>
         </div>
       )}

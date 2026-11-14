@@ -35,6 +35,8 @@ interface Props {
 export interface MapHandle {
   flyTo(p: LngLat, zoom?: number): void
   fit(coords: ArrayLike<number>[]): void
+  /** kaartbeeld als [west, zuid, oost, noord] */
+  bounds(): [number, number, number, number] | null
 }
 
 function padding() {
@@ -72,6 +74,10 @@ const MapView = forwardRef<MapHandle, Props>(function MapView(props, ref) {
   useImperativeHandle(ref, () => ({
     flyTo: (p, zoom = 13) => mapRef.current?.flyTo({ center: p, zoom: Math.max(zoom, mapRef.current.getZoom()) }),
     fit,
+    bounds: () => {
+      const b = mapRef.current?.getBounds()
+      return b ? [b.getWest(), b.getSouth(), b.getEast(), b.getNorth()] : null
+    },
   }))
 
   useEffect(() => {
@@ -90,10 +96,10 @@ const MapView = forwardRef<MapHandle, Props>(function MapView(props, ref) {
     map.addControl(new AttributionControl({ compact: true }), 'bottom-left')
 
     map.on('load', () => {
-      for (const m of ['fiets', 'wandel'] as const) {
+      for (const m of ['wandel', 'fiets', 'mtb'] as const) {
         map.addSource(`trails-${m}`, {
           type: 'raster',
-          tiles: [`https://tile.waymarkedtrails.org/${m === 'fiets' ? 'cycling' : 'hiking'}/{z}/{x}/{y}.png`],
+          tiles: [`https://tile.waymarkedtrails.org/${m === 'fiets' ? 'cycling' : m === 'mtb' ? 'mtb' : 'hiking'}/{z}/{x}/{y}.png`],
           tileSize: 256,
           attribution: TRAILS_ATTR,
         })
@@ -160,8 +166,11 @@ const MapView = forwardRef<MapHandle, Props>(function MapView(props, ref) {
     if (!ready) return
     const map = mapRef.current!
     map.setPaintProperty('route-line', 'line-color', MODE_COLOR[mode])
-    for (const m of ['fiets', 'wandel'] as const)
-      map.setLayoutProperty(`trails-${m}`, 'visibility', showTrails && m === mode ? 'visible' : 'none')
+    // bij fietsen ook de mountainbikeroutes
+    for (const m of ['wandel', 'fiets', 'mtb'] as const) {
+      const on = showTrails && (m === 'mtb' ? mode === 'fiets' : m === mode)
+      map.setLayoutProperty(`trails-${m}`, 'visibility', on ? 'visible' : 'none')
+    }
   }, [ready, mode, showTrails])
 
   // punten

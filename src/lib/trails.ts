@@ -2,8 +2,10 @@ import { ascentOf, buildRoute } from './geo'
 import type { LngLat, Mode, Route } from './types'
 
 // Bekende (bewegwijzerde) routes uit OpenStreetMap, via Waymarked Trails.
-const HOST: Record<Mode, string> = { fiets: 'cycling', wandel: 'hiking' }
-const api = (mode: Mode) => `https://${HOST[mode]}.waymarkedtrails.org/api/v1`
+// Fietsen combineert de fietsroutes met de mountainbikeroutes.
+export type TrailHost = 'hiking' | 'cycling' | 'mtb'
+export const TRAIL_HOSTS: Record<Mode, TrailHost[]> = { fiets: ['cycling', 'mtb'], wandel: ['hiking'] }
+const api = (host: TrailHost) => `https://${host}.waymarkedtrails.org/api/v1`
 
 const R = 6378137
 const toMerc = (p: ArrayLike<number>): [number, number] => [
@@ -15,37 +17,67 @@ const toLonLat = (x: number, y: number): LngLat => [
   ((2 * Math.atan(Math.exp(y / R)) - Math.PI / 2) * 180) / Math.PI,
 ]
 
-const GROUP: Record<string, string> = {
-  INT: 'Internationaal',
-  NAT: 'Nationaal',
-  REG: 'Regionaal',
-  LOC: 'Lokaal',
-}
+export const LEVELS = ['Nationaal', 'Regionaal', 'Lokaal'] as const
+export type Level = (typeof LEVELS)[number]
+const GROUP: Record<string, Level> = { INT: 'Nationaal', NAT: 'Nationaal', REG: 'Regionaal', LOC: 'Lokaal' }
 
-export interface TrailHit {
+export interface TrailRef {
   type: string
   id: number
+  /** ontbreekt bij routes die vóór de MTB-uitbreiding zijn opgeslagen */
+  host?: TrailHost
+}
+
+export interface TrailHit extends TrailRef {
   name: string
   ref?: string
-  /** Nationaal, Regionaal, Lokaal */
-  level?: string
+  level: Level
+  mtb: boolean
+}
+
+const LIMIT = 100
+
+async function list(host: TrailHost, bbox: number[], signal?: AbortSignal): Promise<TrailHit[]> {
+  const res = await fetch(`${api(host)}/list/by_area?bbox=${bbox.map((v) => v.toFixed(0)).join(',')}&limit=${LIMIT}`, {
+    signal,
+  })
+  if (!res.ok) return []
+  const json = await res.json()
+  return (json.results ?? []).map((t: Record<string, string> & { id: number }) => ({
+    type: t.type,
+    id: t.id,
+    host,
+    // routes met alleen een nummer (zoals het National Cycle Network) heten "Route 6"
+    name: t.name ?? (t.ref ? `Route ${t.ref}` : 'Naamloze route'),
+    ref: t.name && t.ref !== t.name ? t.ref : undefined,
+    level: GROUP[t.group] ?? 'Lokaal',
+    mtb: host === 'mtb',
+  }))
+}
+
+async function listAll(mode: Mode, bbox: number[], signal?: AbortSignal) {
+  const lists = await Promise.all(TRAIL_HOSTS[mode].map((h) => list(h, bbox, signal).catch(() => [] as TrailHit[])))
+  const hits = lists.flat()
+  hits.sort((a, b) => LEVELS.indexOf(a.level) - LEVELS.indexOf(b.level) || a.name.localeCompare(b.name))
+  return { hits, capped: lists.some((l) => l.length >= LIMIT) }
 }
 
 /** Bekende routes op de aangetikte plek (straal van ongeveer een vingertop). */
 export async function trailsAt(mode: Mode, pos: LngLat, zoom: number, signal?: AbortSignal): Promise<TrailHit[]> {
   const [x, y] = toMerc(pos)
   const r = (16 * 78271.517) / 2 ** zoom
-  const bbox = [x - r, y - r, x + r, y + r].map((v) => v.toFixed(0)).join(',')
-  const res = await fetch(`${api(mode)}/list/by_area?bbox=${bbox}&limit=8`, { signal })
-  if (!res.ok) return []
-  const json = await res.json()
-  return (json.results ?? []).map((t: Record<string, string> & { id: number }) => ({
-    type: t.type,
-    id: t.id,
-    name: t.name ?? t.ref ?? 'Naamloze route',
-    ref: t.name ? t.ref : undefined,
-    level: GROUP[t.group],
-  }))
+  return (await listAll(mode, [x - r, y - r, x + r, y + r], signal)).hits.slice(0, 8)
+}
+
+/** Alle bekende routes in het kaartbeeld; capped = er zijn er meer dan de dienst in één keer geeft. */
+export function trailsInView(
+  mode: Mode,
+  bounds: [number, number, number, number],
+  signal?: AbortSignal,
+): Promise<{ hits: TrailHit[]; capped: boolean }> {
+  const [x0, y0] = toMerc([bounds[0], bounds[1]])
+  const [x1, y1] = toMerc([bounds[2], bounds[3]])
+  return listAll(mode, [x0, y0, x1, y1], signal)
 }
 
 interface Way {
@@ -71,12 +103,8 @@ interface ElePoint {
 
 const sq = (a: ArrayLike<number>, b: ArrayLike<number>) => (a[0] - b[0]) ** 2 + (a[1] - b[1]) ** 2
 
-export async function fetchTrail(
-  mode: Mode,
-  hit: Pick<TrailHit, 'type' | 'id'>,
-  signal?: AbortSignal,
-): Promise<{ name: string; route: Route }> {
-  const base = `${api(mode)}/details/${hit.type}/${hit.id}`
+export async function fetchTrail(mode: Mode, ref: TrailRef, signal?: AbortSignal): Promise<{ name: string; route: Route }> {
+  const base = `${api(ref.host ?? TRAIL_HOSTS[mode][0])}/details/${ref.type}/${ref.id}`
   const res = await fetch(base, { signal })
   if (!res.ok) throw new Error('Deze route is nu niet op te halen.')
   const detail = await res.json()
