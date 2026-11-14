@@ -16,6 +16,13 @@ const PATHS: Record<string, ReactNode> = {
       <path d="m10 13 4 3 1 5" />
     </>
   ),
+  foto: (
+    <>
+      <rect x="3" y="5" width="18" height="14" rx="2.5" />
+      <circle cx="8.5" cy="10" r="1.5" />
+      <path d="m21 15-4.5-4.5L8 19" />
+    </>
+  ),
   undo: (
     <>
       <path d="M9 14 4 9l5-5" />

@@ -1,6 +1,7 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import AreaSheet from './components/AreaSheet'
 import ElevationProfile from './components/ElevationProfile'
+import RoutePhotos from './components/RoutePhotos'
 import Icon from './components/Icon'
 import MapView, { type MapHandle } from './components/MapView'
 import SearchBar from './components/SearchBar'
@@ -464,6 +465,7 @@ export default function App() {
               </div>
             </div>
             <ElevationProfile route={route} scrub={scrub} onScrub={setScrub} />
+            <RoutePhotos route={route} onLocate={setScrub} />
           </>
         )}
 
