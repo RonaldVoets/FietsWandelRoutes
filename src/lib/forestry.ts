@@ -274,7 +274,7 @@ export async function forestryTrail(
 }
 
 /** Maakt van een lijn een route met hoogteprofiel. */
-async function lineRoute(line: LngLat[][], signal?: AbortSignal): Promise<Route> {
+export async function lineRoute(line: LngLat[][], signal?: AbortSignal): Promise<Route> {
   const flat = line.flat()
   const plain = buildRoute(
     flat.map((p) => [p[0], p[1], 0] as [number, number, number]),

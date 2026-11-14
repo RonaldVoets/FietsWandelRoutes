@@ -8,7 +8,9 @@ import SearchBar from './components/SearchBar'
 import { difficulty, fmtKm, fmtTime, multiDay } from './lib/format'
 import { buildRoute, nearestIndex } from './lib/geo'
 import { parseGpx, shareGpx } from './lib/gpx'
+import { lineRoute } from './lib/forestry'
 import { fetchRoundTrip, fetchRoute } from './lib/routing'
+import { readShared, shareLink, shareUrl } from './lib/share'
 import { loadDraft, loadRoutes, storeDraft, storeRoutes } from './lib/storage'
 import { fetchTrail, trailsAt, trailsInView, type TrailHit, type TrailRef } from './lib/trails'
 import type { LngLat, Mode, Route, SavedRoute } from './lib/types'
@@ -37,6 +39,7 @@ export default function App() {
   const [saved, setSaved] = useState<SavedRoute[]>(loadRoutes)
   const [listOpen, setListOpen] = useState(false)
   const [saveName, setSaveName] = useState<string | null>(null)
+  const [shareOpen, setShareOpen] = useState(false)
   const [toast, setToast] = useState<string | null>(null)
   /** bekende routes op de aangetikte plek, om uit te kiezen */
   const [trailPick, setTrailPick] = useState<{ pos: LngLat; hits: TrailHit[] } | null>(null)
@@ -70,6 +73,8 @@ export default function App() {
 
   // route berekenen
   const routeKey = useRef('')
+  /** na het openen van een gedeelde route: kaart op de route zetten zodra die berekend is */
+  const fitNext = useRef(false)
   useEffect(() => {
     if (waypoints.length < 2) {
       routeKey.current = ''
@@ -90,6 +95,10 @@ export default function App() {
           routeKey.current = key
           setRoute(r)
           setLoading(false)
+          if (fitNext.current) {
+            fitNext.current = false
+            fitSoon(r.coords)
+          }
         })
         .catch((e: Error) => {
           if (e.name === 'AbortError') return
@@ -321,6 +330,60 @@ export default function App() {
     )
   }
 
+  // ---- delen ----
+  const share = async () => {
+    if (!route) return
+    setShareOpen(false)
+    const title = defaultName()
+    const text = `${title} · ${fmtKm(route.distance)} km · ${route.ascent.toLocaleString('nl-NL')} m stijgen · ${fmtTime(route.distance, route.ascent, mode)}`
+    try {
+      const how = await shareLink(title, text, shareUrl({ mode, name, trail, waypoints, route }))
+      if (how === 'gekopieerd') notify('Link gekopieerd. Plak hem in een bericht.')
+    } catch {
+      notify('Delen is niet gelukt.')
+    }
+  }
+
+  // een gedeelde route openen als die in het adres staat
+  useEffect(() => {
+    const s = readShared(location.hash)
+    if (!s) return
+    window.history.replaceState(null, '', location.pathname + location.search)
+    if (s.kind === 'trail') return loadTrail(s.trail, s.mode)
+    setTrail(null)
+    setRoundTrip(null)
+    setHistory([])
+    setSelected(null)
+    setMode(s.mode)
+    setName(s.name)
+    if (s.kind === 'points') {
+      routeKey.current = ''
+      fitNext.current = true
+      setImported(false)
+      setRoute(null)
+      setWaypoints(s.waypoints)
+      return
+    }
+    setWaypoints([])
+    setLoading(true)
+    lineRoute([s.line])
+      .then((r) => {
+        // de lijn in de link is vereenvoudigd; de oorspronkelijke lengte is leidend
+        if (s.distance > 0 && r.distance > 0) {
+          const f = s.distance / r.distance
+          r.cum = r.cum.map((c) => c * f)
+          r.distance = s.distance
+        }
+        setImported(true)
+        setRoute(r)
+        fitSoon(r.coords)
+      })
+      .catch(() => notify('De gedeelde route is niet te openen.'))
+      .finally(() => setLoading(false))
+    // alleen bij het openen van de app
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [])
+
   const remaining = useMemo(() => {
     if (!route || !userPos) return null
     const n = nearestIndex(route, userPos)
@@ -523,12 +586,9 @@ export default function App() {
               <Icon name="opslaan" />
               Opslaan
             </button>
-            <button
-              onClick={() => route && shareGpx(defaultName(), route).catch(() => notify('Delen is niet gelukt.'))}
-              disabled={!route || loading}
-            >
+            <button onClick={() => setShareOpen(true)} disabled={!route || loading}>
               <Icon name="delen" />
-              GPX
+              Delen
             </button>
             <button onClick={clear} disabled={waypoints.length === 0 && !route}>
               <Icon name="wis" />
@@ -537,6 +597,33 @@ export default function App() {
           </div>
         )}
       </section>
+
+      {shareOpen && route && (
+        <div className="overlay" onClick={() => setShareOpen(false)}>
+          <div className="sheet" role="dialog" aria-label="Route delen" onClick={(e) => e.stopPropagation()}>
+            <div className="sheet-head">
+              <h2>Route delen</h2>
+              <button className="icon-btn" aria-label="Sluiten" onClick={() => setShareOpen(false)}>
+                <Icon name="sluit" />
+              </button>
+            </div>
+            <button className="share-option" onClick={share}>
+              <strong>Stuur een link</strong>
+              <span>Via WhatsApp, Mail of een andere app. De ontvanger opent de route in deze app.</span>
+            </button>
+            <button
+              className="share-option"
+              onClick={() => {
+                setShareOpen(false)
+                shareGpx(defaultName(), route).catch(() => notify('Delen is niet gelukt.'))
+              }}
+            >
+              <strong>Stuur een GPX-bestand</strong>
+              <span>Voor komoot, Garmin of een andere routeapp.</span>
+            </button>
+          </div>
+        </div>
+      )}
 
       {listOpen && (
         <div className="overlay" onClick={() => setListOpen(false)}>

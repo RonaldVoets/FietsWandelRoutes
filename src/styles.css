@@ -949,3 +949,20 @@ h2 {
 .lightbox-bar a {
   color: inherit;
 }
+
+.share-option {
+  display: flex;
+  flex-direction: column;
+  gap: 3px;
+  padding: 14px 16px;
+  border-radius: 14px;
+  background: var(--fill);
+  text-align: left;
+}
+.share-option strong {
+  color: var(--accent);
+}
+.share-option span {
+  font-size: 14px;
+  color: var(--muted);
+}
