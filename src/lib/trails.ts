@@ -136,7 +136,7 @@ export async function fetchTrail(
   ref: TrailRef,
   signal?: AbortSignal,
 ): Promise<{ name: string; route: Route }> {
-  if (ref.host === 'fe') return forestryTrail(ref.id, signal)
+  if (ref.host === 'fe') return forestryTrail(ref.type, ref.id, signal)
   const base = `${api(ref.host ?? TRAIL_HOSTS[mode][0])}/details/${ref.type}/${ref.id}`
   const res = await fetch(base, { signal })
   if (!res.ok) throw new Error('Deze route is nu niet op te halen.')

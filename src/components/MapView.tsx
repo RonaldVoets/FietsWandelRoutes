@@ -9,15 +9,16 @@ export const MODE_COLOR: Record<Mode, string> = { fiets: '#0b63ce', wandel: '#c2
 // Vite bundelt de kaart-worker zelf; zonder dit vindt MapLibre hem niet.
 setWorkerUrl(workerUrl)
 
-// Engeland en Wales
+// Beginbeeld: Engeland, van Land's End tot de Schotse grens
 const START_BOUNDS: [LngLat, LngLat] = [
-  [-5.8, 49.9],
-  [1.8, 55.85],
+  [-5.4, 50.0],
+  [1.8, 55.6],
 ]
 
 const TRAILS_ATTR =
   'Routes: <a href="https://waymarkedtrails.org" target="_blank" rel="noreferrer">Waymarked Trails</a>, ' +
   '<a href="https://adventureonfoot.co.uk/registry/licence" target="_blank" rel="noreferrer">Adventure On Foot</a>. ' +
+  'Forest routes in Wales: Natural Resources Wales (OGL), via <a href="https://www.traillines.co.uk/open-data" target="_blank" rel="noreferrer">Trail Lines</a>. ' +
   'Contains, or is based on, information supplied by the Forestry Commission. ' +
   '© Crown copyright and database right 2026 Ordnance Survey AC0000814847'
 
@@ -88,7 +89,8 @@ const MapView = forwardRef<MapHandle, Props>(function MapView(props, ref) {
       container: container.current!,
       style: 'https://tiles.openfreemap.org/styles/liberty',
       bounds: START_BOUNDS,
-      fitBoundsOptions: { padding: 16 },
+      // ruimte voor de zoekbalk boven en het paneel onder
+      fitBoundsOptions: { padding: { top: 76, bottom: 236, left: 6, right: 6 } },
       attributionControl: false,
       dragRotate: false,
       pitchWithRotate: false,

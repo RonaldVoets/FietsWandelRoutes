@@ -14,9 +14,12 @@
     "react-dom": "^19.3.1"
   },
   "devDependencies": {
+    "@mapbox/vector-tile": "^3.0.0",
     "@types/react": "^19.3.0",
     "@types/react-dom": "^19.3.0",
     "@vitejs/plugin-react": "^6.3.0",
+    "pbf": "^5.1.2",
+    "pmtiles": "^4.5.0",
     "typescript": "^7.0.2",
     "vite": "^8.3.8"
   }

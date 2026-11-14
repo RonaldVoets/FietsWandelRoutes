@@ -4,6 +4,8 @@ import type { LngLat, Mode, Route } from './types'
 
 // Officiële wandel- en fietsroutes in de bossen van Forestry England (Open Government Licence).
 // De dienst levert losse stukken; stukken met dezelfde naam vormen samen één route.
+// De bosroutes in Wales (Natural Resources Wales) komen uit een bestand dat
+// scripts/import-wales-forest.mjs uit de open data van Trail Lines maakt.
 const QUERY =
   'https://services2.arcgis.com/mHXjwgl3OARRqqD4/ArcGIS/rest/services/Forestry_England_Recreation_Routes/FeatureServer/0/query'
 
@@ -47,8 +49,59 @@ async function query(params: Record<string, string>, signal?: AbortSignal) {
   return res.json()
 }
 
-/** Routes die het kaartvak [west, zuid, oost, noord] raken. */
+interface WalesRoute {
+  id: number
+  name: string
+  cat: string
+  grade: string
+  type: string
+  len: number
+  box: [number, number, number, number]
+  line: LngLat[][]
+}
+
+const WALES = [-5.6, 51.2, -2.5, 53.6]
+const overlaps = (a: number[], b: number[]) => a[0] <= b[2] && a[2] >= b[0] && a[1] <= b[3] && a[3] >= b[1]
+let wales: Promise<WalesRoute[]> | null = null
+/** Het bestand met de Welshe bosroutes; pas opgehaald als de kaart Wales laat zien. */
+function walesRoutes(): Promise<WalesRoute[]> {
+  wales ??= fetch(`${import.meta.env.BASE_URL}data/wales-forest.json`)
+    .then((r) => (r.ok ? r.json() : Promise.reject(new Error('Welshe bosroutes zijn nu niet op te halen.'))))
+    .then((j) => j.routes as WalesRoute[])
+    .catch((e) => {
+      wales = null
+      throw e
+    })
+  return wales
+}
+
+async function walesList(mode: Mode, box: number[]): Promise<TrailHit[]> {
+  if (!overlaps(box, WALES)) return []
+  const routes = await walesRoutes()
+  return routes
+    .filter((r) => CATEGORIES[mode].includes(r.cat) && overlaps(box, r.box))
+    .map((r) => ({
+      type: 'nrw',
+      id: r.id,
+      host: 'fe' as const,
+      name: r.name,
+      ref: ['Natural Resources Wales', grade(r.grade)].filter(Boolean).join(' '),
+      level: 'Lokaal' as const,
+      mtb: r.type === 'Mountain Bike' || r.type === 'Downhill',
+      length: r.len,
+    }))
+}
+
+/** Bosroutes die het kaartvak [west, zuid, oost, noord] raken, in Engeland en Wales. */
 export async function forestryList(mode: Mode, box: number[], signal?: AbortSignal): Promise<TrailHit[]> {
+  const [england, welsh] = await Promise.all([
+    englandList(mode, box, signal).catch(() => [] as TrailHit[]),
+    walesList(mode, box).catch(() => [] as TrailHit[]),
+  ])
+  return [...england, ...welsh]
+}
+
+async function englandList(mode: Mode, box: number[], signal?: AbortSignal): Promise<TrailHit[]> {
   const json = await query(
     {
       where: where(mode),
@@ -152,7 +205,16 @@ async function elevations(pts: LngLat[], signal?: AbortSignal): Promise<number[]
   }
 }
 
-export async function forestryTrail(id: number, signal?: AbortSignal): Promise<{ name: string; route: Route }> {
+export async function forestryTrail(
+  type: string,
+  id: number,
+  signal?: AbortSignal,
+): Promise<{ name: string; route: Route }> {
+  if (type === 'nrw') {
+    const r = (await walesRoutes()).find((x) => x.id === id)
+    if (!r) throw new Error('Deze route is niet meer bekend.')
+    return { name: r.name, route: await lineRoute(r.line, signal) }
+  }
   const one = await query(
     {
       objectIds: String(id),
@@ -208,7 +270,11 @@ export async function forestryTrail(id: number, signal?: AbortSignal): Promise<{
     }
   }
 
-  const line = chain([...group])
+  return { name: tidy(a.asset_name), route: await lineRoute(chain([...group]), signal) }
+}
+
+/** Maakt van een lijn een route met hoogteprofiel. */
+async function lineRoute(line: LngLat[][], signal?: AbortSignal): Promise<Route> {
   const flat = line.flat()
   const plain = buildRoute(
     flat.map((p) => [p[0], p[1], 0] as [number, number, number]),
@@ -251,5 +317,5 @@ export async function forestryTrail(id: number, signal?: AbortSignal): Promise<{
     route.distance = own
   }
   route.line = line
-  return { name: tidy(a.asset_name), route }
+  return route
 }
