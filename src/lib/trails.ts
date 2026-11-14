@@ -171,3 +171,62 @@ export async function fetchTrail(mode: Mode, ref: TrailRef, signal?: AbortSignal
   route.line = line
   return { name: detail.name ?? detail.ref ?? 'Bekende route', route }
 }
+
+export const trailKey = (t: TrailRef) => `${t.host}/${t.type}/${t.id}`
+
+// ---- lengte per route voor de lijst ----
+// De lijst van de dienst bevat geen lengte; die staat alleen in de routedetails, en die zijn
+// voor lange routes megabytes groot. De lengte staat vooraan in dat antwoord, dus we lezen
+// alleen het begin en breken dan af. Gevonden lengtes bewaren we op het toestel.
+const LEN_STORE = 'fwr.trailLen'
+const LEN_RE = /"route":\s*\{\s*"route_type":\s*"\w+",\s*"length":\s*(\d+)/
+let lenCache: Record<string, number> | null = null
+
+function lengths(): Record<string, number> {
+  if (!lenCache) {
+    try {
+      lenCache = JSON.parse(localStorage.getItem(LEN_STORE) ?? '{}')
+    } catch {
+      lenCache = {}
+    }
+  }
+  return lenCache!
+}
+
+/** Lengte in meters, of null als die niet te bepalen is. */
+export async function trailLength(t: TrailRef, signal?: AbortSignal): Promise<number | null> {
+  const key = trailKey(t)
+  const cached = lengths()[key]
+  if (cached !== undefined) return cached
+  if (!t.host) return null
+  const ac = new AbortController()
+  const stop = () => ac.abort()
+  signal?.addEventListener('abort', stop)
+  try {
+    const res = await fetch(`${api(t.host)}/details/${t.type}/${t.id}`, { signal: ac.signal })
+    if (!res.ok || !res.body) return null
+    const reader = res.body.getReader()
+    const dec = new TextDecoder()
+    let text = ''
+    while (text.length < 300_000) {
+      const { done, value } = await reader.read()
+      if (done) break
+      text += dec.decode(value, { stream: true })
+      const m = LEN_RE.exec(text)
+      if (m) {
+        const len = Number(m[1])
+        lengths()[key] = len
+        try {
+          localStorage.setItem(LEN_STORE, JSON.stringify(lengths()))
+        } catch {
+          // opslag vol: dan alleen in het geheugen
+        }
+        return len
+      }
+    }
+    return null
+  } finally {
+    signal?.removeEventListener('abort', stop)
+    ac.abort()
+  }
+}

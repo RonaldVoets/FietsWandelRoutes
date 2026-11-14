@@ -798,3 +798,32 @@ h2 {
 .area-list .route-text {
   flex: 1;
 }
+
+.sortbar {
+  display: grid;
+  grid-template-columns: repeat(3, 1fr);
+  padding: 3px;
+  border-radius: 11px;
+  background: var(--fill);
+}
+.sortbar button {
+  height: 36px;
+  border-radius: 9px;
+  font-size: 14px;
+  font-weight: 600;
+  color: var(--muted);
+}
+.sortbar button[aria-selected='true'] {
+  background: var(--solid);
+  color: var(--fg);
+  box-shadow: 0 1px 4px rgba(0, 0, 0, 0.14);
+}
+@media (prefers-color-scheme: dark) {
+  .sortbar button[aria-selected='true'] {
+    background: rgba(255, 255, 255, 0.16);
+  }
+}
+.route-text b {
+  color: var(--fg);
+  font-weight: 600;
+}

@@ -1,4 +1,5 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
+import AreaSheet from './components/AreaSheet'
 import ElevationProfile from './components/ElevationProfile'
 import Icon from './components/Icon'
 import MapView, { type MapHandle } from './components/MapView'
@@ -8,7 +9,7 @@ import { buildRoute, nearestIndex } from './lib/geo'
 import { parseGpx, shareGpx } from './lib/gpx'
 import { fetchRoundTrip, fetchRoute } from './lib/routing'
 import { loadDraft, loadRoutes, storeDraft, storeRoutes } from './lib/storage'
-import { fetchTrail, LEVELS, trailsAt, trailsInView, type TrailHit, type TrailRef } from './lib/trails'
+import { fetchTrail, trailsAt, trailsInView, type TrailHit, type TrailRef } from './lib/trails'
 import type { LngLat, Mode, Route, SavedRoute } from './lib/types'
 
 const MODE_LABEL: Record<Mode, string> = { fiets: 'Fietsen', wandel: 'Wandelen' }
@@ -591,58 +592,15 @@ export default function App() {
       )}
 
       {area && (
-        <div className="overlay" onClick={() => setArea(null)}>
-          <div className="sheet" role="dialog" aria-label="Bekende routes in beeld" onClick={(e) => e.stopPropagation()}>
-            <div className="sheet-head">
-              <h2>
-                {mode === 'fiets' ? 'Fietsroutes' : 'Wandelroutes'} in beeld
-                {area !== 'laden' && <span className="count">{area.hits.length}</span>}
-              </h2>
-              <button className="icon-btn" aria-label="Sluiten" onClick={() => setArea(null)}>
-                <Icon name="sluit" />
-              </button>
-            </div>
-            {area === 'laden' ? (
-              <p className="empty">Routes ophalen…</p>
-            ) : area.hits.length === 0 ? (
-              <p className="empty">Geen bekende routes in dit kaartbeeld. Schuif of zoom uit en probeer het opnieuw.</p>
-            ) : (
-              <div className="area-list">
-                {area.capped && <p className="empty">Er zijn meer routes dan hier passen. Zoom in voor de volledige lijst.</p>}
-                {LEVELS.map((lv) => {
-                  const hits = area.hits.filter((h) => h.level === lv)
-                  if (hits.length === 0) return null
-                  return (
-                    <section key={lv}>
-                      <h3>
-                        {lv} · {hits.length}
-                      </h3>
-                      <ul className="routes">
-                        {hits.map((h) => (
-                          <li key={h.host + h.type + h.id}>
-                            <button
-                              className="route-item"
-                              onClick={() => {
-                                setArea(null)
-                                loadTrail(h)
-                              }}
-                            >
-                              <span className="route-text">
-                                <strong>{h.name}</strong>
-                                {(h.ref || h.mtb) && <span>{[h.ref, h.mtb && 'MTB'].filter(Boolean).join(' · ')}</span>}
-                              </span>
-                              <span className="pick-go">Bekijk</span>
-                            </button>
-                          </li>
-                        ))}
-                      </ul>
-                    </section>
-                  )
-                })}
-              </div>
-            )}
-          </div>
-        </div>
+        <AreaSheet
+          mode={mode}
+          area={area}
+          onClose={() => setArea(null)}
+          onPick={(h) => {
+            setArea(null)
+            loadTrail(h)
+          }}
+        />
       )}
 
       {saveName !== null && (
